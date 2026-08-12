@@ -109,6 +109,25 @@ Installing after a compile simply amounts to copying the generated binary
 (either gambatte_qt/bin/gambatte_qt<.exe> or gambatte_sdl/gambatte_sdl<.exe>)
 to wherever you'd like to keep it.
 
+NextUI netplay builds
+--------------------------------------------------------------------------------
+
+The network-enabled libretro build includes a hardened Game Link transport with
+complete packet reads and writes, `TCP_NODELAY`, bounded socket operations, and
+connection pacing diagnostics. Build it with `HAVE_NETWORK=1`.
+
+An experimental dual-instance build links two Gambatte instances through an
+in-process serial coordinator. It is enabled separately so it does not alter the
+ordinary core:
+
+    make -f Makefile.libretro HAVE_NETWORK=1 NETPLAY_DUAL_INSTANCE=1
+
+This build identifies itself as `Gambatte Dual v0.5.0-netdual6`. It provides two
+input ports and a frame-boundary service scheduler for timing-sensitive link
+games. It currently loads the same content into both instances, creates the
+secondary worker per frontend frame, and intentionally disables libretro save
+states until paired emulator and coordinator serialization are implemented.
+
 Thanks
 --------------------------------------------------------------------------------
 Derek Liauw Kie Fa (Kreed)

@@ -48,6 +48,10 @@ SOURCES_CXX := \
 	$(CORE_DIR)/video/sprite_mapper.cpp \
 	$(CORE_DIR)/../libretro/libretro.cpp
 
+ifeq ($(NETPLAY_DUAL_INSTANCE),1)
+SOURCES_CXX += $(CORE_DIR)/../libretro/local_serial.cpp
+endif
+
 ifeq ($(HAVE_NETWORK),1)
 	SOURCES_CXX += \
 		$(CORE_DIR)/../libretro/net_serial.cpp
