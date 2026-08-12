@@ -32,6 +32,7 @@ public:
 	void setActive(unsigned endpoint, bool active);
 	bool peerActive(unsigned endpoint);
 	bool waitForService(unsigned endpoint, unsigned timeout_us);
+	bool isIdle();
 	unsigned char send(unsigned endpoint, unsigned char data, bool fastCgb);
 	bool check(unsigned endpoint, unsigned char out, unsigned char& in, bool& fastCgb);
 	void snapshot(NetplayLocalSerialStats& stats);

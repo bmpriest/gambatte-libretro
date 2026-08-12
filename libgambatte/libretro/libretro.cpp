@@ -13,6 +13,7 @@
 #endif
 #ifdef NETPLAY_DUAL_INSTANCE
 #include "local_serial.h"
+#include "gambatte_dual.h"
 #include <pthread.h>
 #include <sys/time.h>
 #endif
@@ -120,6 +121,8 @@ static NetplayLocalSerialBus local_serial_bus;
 static NetplayLocalSerialEndpoint local_serial_a(local_serial_bus, 0);
 static NetplayLocalSerialEndpoint local_serial_b(local_serial_bus, 1);
 static int dual_mirror_input = 0;
+static unsigned dual_visible_console = GAMBATTE_DUAL_CONSOLE_BOTH;
+static const struct retro_game_info* dual_second_game_info = NULL;
 
 struct DualDiagnostics {
    uint64_t frames;
@@ -1777,7 +1780,7 @@ void retro_get_system_info(struct retro_system_info *info)
 #define GIT_VERSION ""
 #endif
 #ifdef NETPLAY_DUAL_INSTANCE
-   info->library_version = "v0.5.0-netdual6" GIT_VERSION;
+   info->library_version = "v0.5.0-netdual7" GIT_VERSION;
 #else
 #ifdef HAVE_NETWORK
    info->library_version = "v0.5.0-netlink3" GIT_VERSION;
@@ -1792,12 +1795,18 @@ void retro_get_system_info(struct retro_system_info *info)
 
 void retro_get_system_av_info(struct retro_system_av_info *info)
 {
-
-   info->geometry.base_width   = VIDEO_WIDTH;
+#ifdef NETPLAY_DUAL_INSTANCE
+   const unsigned presentation_width =
+         dual_visible_console == GAMBATTE_DUAL_CONSOLE_BOTH
+         ? VIDEO_WIDTH : GB_SCREEN_WIDTH;
+#else
+   const unsigned presentation_width = VIDEO_WIDTH;
+#endif
+   info->geometry.base_width   = presentation_width;
    info->geometry.base_height  = VIDEO_HEIGHT;
    info->geometry.max_width    = VIDEO_WIDTH;
    info->geometry.max_height   = VIDEO_HEIGHT;
-   info->geometry.aspect_ratio = (float)GB_SCREEN_WIDTH / (float)VIDEO_HEIGHT;
+   info->geometry.aspect_ratio = (float)presentation_width / (float)VIDEO_HEIGHT;
 
    info->timing.fps            = VIDEO_REFRESH_RATE;
    info->timing.sample_rate    = use_cc_resampler ?
@@ -1926,6 +1935,19 @@ void retro_set_environment(retro_environment_t cb)
    bool option_categories = false;
    environ_cb = cb;
 
+#ifdef NETPLAY_DUAL_INSTANCE
+   static const struct retro_subsystem_rom_info dual_roms[] = {
+      { "Console A", "gb|gbc|dmg", false, false, true, NULL, 0 },
+      { "Console B", "gb|gbc|dmg", false, false, true, NULL, 0 }
+   };
+   static const struct retro_subsystem_info dual_subsystems[] = {
+      { "Game Boy Link Cable", "gblc", dual_roms, 2,
+         GAMBATTE_DUAL_SUBSYSTEM_ID },
+      { NULL, NULL, NULL, 0, 0 }
+   };
+   environ_cb(RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO, (void*)dual_subsystems);
+#endif
+
    /* Set core options
     * An annoyance: retro_set_environment() can be called
     * multiple times, and depending upon the current frontend
@@ -1985,11 +2007,20 @@ void retro_reset()
    /* gb.reset() now preserves battery-backed SRAM and RTC
     * automatically (matching real Game Boy behavior), so the
     * old new[]/memcpy/delete[] dance is no longer needed. */
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (dual_visible_console == GAMBATTE_DUAL_CONSOLE_A)
+      gb.reset();
+   else if (dual_visible_console == GAMBATTE_DUAL_CONSOLE_B)
+      gb2.reset();
+   else {
+      gb.reset();
+      gb2.reset();
+   }
+   local_serial_bus.reset();
+#else
    gb.reset();
 #ifdef DUAL_MODE
    gb2.reset();
-#ifdef NETPLAY_DUAL_INSTANCE
-   local_serial_bus.reset();
 #endif
 #endif
 
@@ -2795,6 +2826,10 @@ static void check_variables(bool startup)
 bool retro_load_game(const struct retro_game_info *info)
 {
    bool can_dupe = false;
+#ifdef NETPLAY_DUAL_INSTANCE
+   const struct retro_game_info *info2 = dual_second_game_info
+         ? dual_second_game_info : info;
+#endif
 
    /* Defensive validation. retro_load_game previously read 16
     * header bytes at info->data + 0x134 with no size check; that
@@ -2807,6 +2842,13 @@ bool retro_load_game(const struct retro_game_info *info)
       gambatte_log(RETRO_LOG_ERROR, "ROM is missing or too small.\n");
       return false;
    }
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (!info2 || !info2->data || info2->size < 0x150)
+   {
+      gambatte_log(RETRO_LOG_ERROR, "Second ROM is missing or too small.\n");
+      return false;
+   }
+#endif
 
    /* Reset per-session state that does not belong to the
     * cartridge or the gambatte core proper but does affect
@@ -2971,7 +3013,11 @@ bool retro_load_game(const struct retro_game_info *info)
    if (gb.load(info->data, info->size, flags) != 0)
       return false;
 #ifdef DUAL_MODE
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (gb2.load(info2->data, info2->size, flags) != 0)
+#else
    if (gb2.load(info->data, info->size, flags) != 0)
+#endif
       return false;
 #endif
 
@@ -2996,21 +3042,27 @@ bool retro_load_game(const struct retro_game_info *info)
 #endif
    audio_resampler_init(true);
 
-   unsigned sramlen       = gb.savedata_size();
+#ifdef NETPLAY_DUAL_INSTANCE
+   gambatte::GB &frontend_gb = dual_visible_console == GAMBATTE_DUAL_CONSOLE_B
+         ? gb2 : gb;
+#else
+   gambatte::GB &frontend_gb = gb;
+#endif
+   unsigned sramlen       = frontend_gb.savedata_size();
    const uint64_t rom     = RETRO_MEMDESC_CONST;
    const uint64_t mainram = RETRO_MEMDESC_SYSTEM_RAM;
    struct retro_memory_map mmaps;
 
    struct retro_memory_descriptor descs[10] =
    {
-      { mainram, gb.rambank0_ptr(),     0, 0xC000,          0, 0, 0x1000, NULL },
-      { mainram, gb.rambank1_ptr(),     0, 0xD000,          0, 0, 0x1000, NULL },
-      { mainram, gb.zeropage_ptr(),     0, 0xFF80,          0, 0, 0x0080, NULL },
-      {       0, gb.vram_ptr(),         0, 0x8000,          0, 0, 0x2000, NULL },
-      {       0, gb.oamram_ptr(),       0, 0xFE00, 0xFFFFFFE0, 0, 0x00A0, NULL },
-      {     rom, gb.rombank0_ptr(),     0, 0x0000,          0, 0, 0x4000, NULL },
-      {     rom, gb.rombank1_ptr(),     0, 0x4000,          0, 0, 0x4000, NULL },
-      {       0, gb.oamram_ptr(),   0x100, 0xFF00,          0, 0, 0x0080, NULL },
+      { mainram, frontend_gb.rambank0_ptr(), 0, 0xC000,          0, 0, 0x1000, NULL },
+      { mainram, frontend_gb.rambank1_ptr(), 0, 0xD000,          0, 0, 0x1000, NULL },
+      { mainram, frontend_gb.zeropage_ptr(), 0, 0xFF80,          0, 0, 0x0080, NULL },
+      {       0, frontend_gb.vram_ptr(),     0, 0x8000,          0, 0, 0x2000, NULL },
+      {       0, frontend_gb.oamram_ptr(),   0, 0xFE00, 0xFFFFFFE0, 0, 0x00A0, NULL },
+      {     rom, frontend_gb.rombank0_ptr(), 0, 0x0000,          0, 0, 0x4000, NULL },
+      {     rom, frontend_gb.rombank1_ptr(), 0, 0x4000,          0, 0, 0x4000, NULL },
+      {       0, frontend_gb.oamram_ptr(), 0x100, 0xFF00,        0, 0, 0x0080, NULL },
       {       0, 0,                     0,      0,          0, 0,      0,    0 },
       {       0, 0,                     0,      0,          0, 0,      0,    0 }
    };
@@ -3018,17 +3070,17 @@ bool retro_load_game(const struct retro_game_info *info)
    unsigned i = 8;
    if (sramlen)
    {
-      descs[i].ptr    = gb.savedata_ptr();
+      descs[i].ptr    = frontend_gb.savedata_ptr();
       descs[i].start  = 0xA000;
       descs[i].select = (size_t)~0x1FFF;
       descs[i].len    = sramlen;
       i++;
    }
 
-   if (gb.isCgb())
+   if (frontend_gb.isCgb())
    {
       descs[i].flags  = mainram;
-      descs[i].ptr    = gb.rambank2_ptr();
+      descs[i].ptr    = frontend_gb.rambank2_ptr();
       descs[i].start  = 0x10000;
       descs[i].select = 0xFFFFA000;
       descs[i].len    = 0x6000;
@@ -3047,11 +3099,30 @@ bool retro_load_game(const struct retro_game_info *info)
 }
 
 
-bool retro_load_game_special(unsigned, const struct retro_game_info*, size_t) { return false; }
+bool retro_load_game_special(unsigned game_type,
+      const struct retro_game_info *info, size_t num_info)
+{
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (game_type != GAMBATTE_DUAL_SUBSYSTEM_ID || !info || num_info != 2)
+      return false;
+   dual_second_game_info = &info[1];
+   const bool loaded = retro_load_game(&info[0]);
+   dual_second_game_info = NULL;
+   return loaded;
+#else
+   (void)game_type;
+   (void)info;
+   (void)num_info;
+   return false;
+#endif
+}
 
 void retro_unload_game()
 {
    rom_loaded = false;
+#ifdef NETPLAY_DUAL_INSTANCE
+   dual_second_game_info = NULL;
+#endif
    /* Clear per-game state so a subsequent retro_load_game with
     * a different ROM doesn't see leftovers (palette autodetect
     * keying off internal_game_name, frame-pacing ratio, cached
@@ -3071,6 +3142,11 @@ unsigned retro_get_region() { return RETRO_REGION_NTSC; }
 
 void *retro_get_memory_data(unsigned id)
 {
+#ifdef NETPLAY_DUAL_INSTANCE
+   const unsigned visible = dual_visible_console == GAMBATTE_DUAL_CONSOLE_B
+         ? GAMBATTE_DUAL_CONSOLE_B : GAMBATTE_DUAL_CONSOLE_A;
+   return retro_dual_get_memory_data(visible, id);
+#else
    if (rom_loaded) switch (id)
    {
       case RETRO_MEMORY_SAVE_RAM:
@@ -3086,10 +3162,16 @@ void *retro_get_memory_data(unsigned id)
    }
 
    return 0;
+#endif
 }
 
 size_t retro_get_memory_size(unsigned id)
 {
+#ifdef NETPLAY_DUAL_INSTANCE
+   const unsigned visible = dual_visible_console == GAMBATTE_DUAL_CONSOLE_B
+         ? GAMBATTE_DUAL_CONSOLE_B : GAMBATTE_DUAL_CONSOLE_A;
+   return retro_dual_get_memory_size(visible, id);
+#else
    if (rom_loaded) switch (id)
    {
       case RETRO_MEMORY_SAVE_RAM:
@@ -3108,7 +3190,168 @@ size_t retro_get_memory_size(unsigned id)
    }
 
    return 0;
+#endif
 }
+
+#ifdef NETPLAY_DUAL_INSTANCE
+namespace {
+
+static gambatte::GB *dual_gb(unsigned console)
+{
+   if (console == GAMBATTE_DUAL_CONSOLE_A) return &gb;
+   if (console == GAMBATTE_DUAL_CONSOLE_B) return &gb2;
+   return NULL;
+}
+
+static const uint32_t DUAL_STATE_MAGIC = 0x31444247u; /* "GBD1" */
+static const size_t DUAL_STATE_HEADER_SIZE = 16;
+
+static void dual_write_u32(unsigned char *p, uint32_t value)
+{
+   p[0] = (unsigned char)value;
+   p[1] = (unsigned char)(value >> 8);
+   p[2] = (unsigned char)(value >> 16);
+   p[3] = (unsigned char)(value >> 24);
+}
+
+static uint32_t dual_read_u32(const unsigned char *p)
+{
+   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
+      ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void dual_reset_output_history(void)
+{
+   if (resampler_l) blipper_reset(resampler_l);
+   if (resampler_r) blipper_reset(resampler_r);
+   if (use_cc_resampler) CC_init();
+   audio_out_buffer_pos = 0;
+   frame_pacing_reset();
+   reset_frame_blending_buffers();
+}
+
+}
+
+unsigned retro_dual_get_abi_version(void)
+{
+   return GAMBATTE_DUAL_ABI_VERSION;
+}
+
+uint64_t retro_dual_get_capabilities(void)
+{
+   return GAMBATTE_DUAL_CAP_TWO_CONTENTS |
+      GAMBATTE_DUAL_CAP_CONSOLE_MEMORY |
+      GAMBATTE_DUAL_CAP_VISIBLE_CONSOLE |
+      GAMBATTE_DUAL_CAP_PAIRED_CHECKPOINT |
+      GAMBATTE_DUAL_CAP_TARGETED_RESET;
+}
+
+bool retro_dual_set_visible_console(unsigned console)
+{
+   if (console > GAMBATTE_DUAL_CONSOLE_BOTH || rom_loaded)
+      return false;
+   dual_visible_console = console;
+   return true;
+}
+
+unsigned retro_dual_get_visible_console(void)
+{
+   return dual_visible_console;
+}
+
+void *retro_dual_get_memory_data(unsigned console, unsigned id)
+{
+   gambatte::GB *instance = dual_gb(console);
+   if (!rom_loaded || !instance) return NULL;
+   switch (id) {
+      case RETRO_MEMORY_SAVE_RAM: return instance->savedata_ptr();
+      case RETRO_MEMORY_RTC: return instance->rtcdata_ptr();
+      case RETRO_MEMORY_SYSTEM_RAM: return instance->rambank0_ptr();
+      default: return NULL;
+   }
+}
+
+size_t retro_dual_get_memory_size(unsigned console, unsigned id)
+{
+   gambatte::GB *instance = dual_gb(console);
+   if (!rom_loaded || !instance) return 0;
+   switch (id) {
+      case RETRO_MEMORY_SAVE_RAM: return instance->savedata_size();
+      case RETRO_MEMORY_RTC: return instance->rtcdata_size();
+      case RETRO_MEMORY_SYSTEM_RAM:
+         return (instance->isCgb() ? 8 : 2) * 0x1000ul;
+      default: return 0;
+   }
+}
+
+bool retro_dual_reset_console(unsigned console)
+{
+   gambatte::GB *instance = dual_gb(console);
+   if (!rom_loaded || !instance || !local_serial_bus.isIdle()) return false;
+   instance->reset();
+   local_serial_bus.reset();
+   dual_reset_output_history();
+   return true;
+}
+
+bool retro_dual_is_checkpoint_safe(void)
+{
+   return rom_loaded && local_serial_bus.isIdle();
+}
+
+size_t retro_dual_serialize_size(void)
+{
+   if (!rom_loaded) return 0;
+   return DUAL_STATE_HEADER_SIZE + gb.stateSize() + gb2.stateSize();
+}
+
+bool retro_dual_serialize(void *data, size_t size)
+{
+   const size_t a_size = gb.stateSize();
+   const size_t b_size = gb2.stateSize();
+   if (!data || !retro_dual_is_checkpoint_safe() ||
+       size != DUAL_STATE_HEADER_SIZE + a_size + b_size ||
+       a_size > UINT32_MAX || b_size > UINT32_MAX)
+      return false;
+   unsigned char *bytes = static_cast<unsigned char*>(data);
+   dual_write_u32(bytes + 0, DUAL_STATE_MAGIC);
+   dual_write_u32(bytes + 4, GAMBATTE_DUAL_ABI_VERSION);
+   dual_write_u32(bytes + 8, (uint32_t)a_size);
+   dual_write_u32(bytes + 12, (uint32_t)b_size);
+   gb.saveState(bytes + DUAL_STATE_HEADER_SIZE);
+   gb2.saveState(bytes + DUAL_STATE_HEADER_SIZE + a_size);
+   return true;
+}
+
+bool retro_dual_unserialize(const void *data, size_t size)
+{
+   if (!data || !retro_dual_is_checkpoint_safe() ||
+       size < DUAL_STATE_HEADER_SIZE)
+      return false;
+   const unsigned char *bytes = static_cast<const unsigned char*>(data);
+   const size_t a_size = dual_read_u32(bytes + 8);
+   const size_t b_size = dual_read_u32(bytes + 12);
+   if (dual_read_u32(bytes + 0) != DUAL_STATE_MAGIC ||
+       dual_read_u32(bytes + 4) != GAMBATTE_DUAL_ABI_VERSION ||
+       a_size != gb.stateSize() || b_size != gb2.stateSize() ||
+       size != DUAL_STATE_HEADER_SIZE + a_size + b_size)
+      return false;
+
+   std::vector<unsigned char> old_a(a_size), old_b(b_size);
+   gb.saveState(&old_a[0]);
+   gb2.saveState(&old_b[0]);
+   if (!gb.loadState(bytes + DUAL_STATE_HEADER_SIZE, a_size))
+      return false;
+   if (!gb2.loadState(bytes + DUAL_STATE_HEADER_SIZE + a_size, b_size)) {
+      gb.loadState(&old_a[0], a_size);
+      gb2.loadState(&old_b[0], b_size);
+      return false;
+   }
+   local_serial_bus.reset();
+   dual_reset_output_history();
+   return true;
+}
+#endif
 
 #ifdef NETPLAY_DUAL_INSTANCE
 struct DualRunContext {
@@ -3116,6 +3359,7 @@ struct DualRunContext {
       gambatte::uint_least32_t u32[SOUND_BUFF_SIZE];
       int16_t i16[2 * SOUND_BUFF_SIZE];
    } sound;
+   std::vector<gambatte::uint_least32_t> audio;
    unsigned samples;
    uint64_t elapsed_us;
 };
@@ -3124,11 +3368,16 @@ static void* run_secondary_frame(void* opaque)
 {
    DualRunContext* context = static_cast<DualRunContext*>(opaque);
    const uint64_t started = dual_now_us();
+   context->audio.clear();
    local_serial_bus.setActive(1, true);
-   context->samples = SOUND_SAMPLES_PER_RUN;
-   while (gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
-          context->sound.u32, SOUND_BUFF_SIZE, context->samples) == -1)
+   do {
       context->samples = SOUND_SAMPLES_PER_RUN;
+      const long result = gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
+            context->sound.u32, SOUND_BUFF_SIZE, context->samples);
+      context->audio.insert(context->audio.end(), context->sound.u32,
+            context->sound.u32 + context->samples);
+      if (result != -1) break;
+   } while (true);
    local_serial_bus.setActive(1, false);
    while (local_serial_bus.peerActive(1)) {
       if (local_serial_bus.waitForService(1, 250)) {
@@ -3136,6 +3385,8 @@ static void* run_secondary_frame(void* opaque)
          unsigned service_samples = 32;
          gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
                context->sound.u32, SOUND_BUFF_SIZE, service_samples);
+         context->audio.insert(context->audio.end(), context->sound.u32,
+               context->sound.u32 + service_samples);
          local_serial_bus.setActive(1, false);
       }
    }
@@ -3156,7 +3407,14 @@ void retro_run()
    uint64_t expected_frames = libretro_samples_count / SOUND_SAMPLES_PER_FRAME;
    if (libretro_frames_count < expected_frames) // Detect frame dupes.
    {
-      video_cb(NULL, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
+#ifdef NETPLAY_DUAL_INSTANCE
+      const unsigned width = dual_visible_console == GAMBATTE_DUAL_CONSOLE_BOTH
+            ? VIDEO_WIDTH : GB_SCREEN_WIDTH;
+#else
+      const unsigned width = VIDEO_WIDTH;
+#endif
+      video_cb(NULL, width, VIDEO_HEIGHT,
+            VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
       libretro_frames_count++;
       return;
    }
@@ -3180,6 +3438,8 @@ void retro_run()
    else
       libretro_input_state2 = read_basic_input(1);
    static DualRunContext secondary;
+   static std::vector<gambatte::uint_least32_t> primary_service_audio;
+   primary_service_audio.clear();
    pthread_t secondary_thread;
    const uint64_t pair_started = dual_now_us();
    bool secondary_started = pthread_create(&secondary_thread, NULL,
@@ -3195,6 +3455,10 @@ void retro_run()
 #endif
    while (gb.runFor(video_buf, VIDEO_PITCH, sound_buf.u32, SOUND_BUFF_SIZE, samples) == -1)
    {
+#ifdef NETPLAY_DUAL_INSTANCE
+      if (dual_visible_console != GAMBATTE_DUAL_CONSOLE_B)
+      {
+#endif
       if (use_cc_resampler)
          CC_renderaudio((audio_frame_t*)sound_buf.u32, samples);
       else
@@ -3207,6 +3471,9 @@ void retro_run()
       }
 
       libretro_samples_count += samples;
+#ifdef NETPLAY_DUAL_INSTANCE
+      }
+#endif
       samples = SOUND_SAMPLES_PER_RUN;
    }
 #ifdef NETPLAY_DUAL_INSTANCE
@@ -3218,6 +3485,8 @@ void retro_run()
          unsigned service_samples = 32;
          gb.runFor(video_buf, VIDEO_PITCH, service_sound,
                SOUND_BUFF_SIZE, service_samples);
+         primary_service_audio.insert(primary_service_audio.end(),
+               service_sound, service_sound + service_samples);
          local_serial_bus.setActive(0, false);
       }
    }
@@ -3231,6 +3500,27 @@ void retro_run()
       run_secondary_frame(&secondary);
    dual_record_frame(primary_elapsed, secondary.elapsed_us,
       dual_now_us() - pair_started);
+   if (dual_visible_console == GAMBATTE_DUAL_CONSOLE_B)
+   {
+      size_t offset = 0;
+      while (offset < secondary.audio.size())
+      {
+         const unsigned chunk = (unsigned)std::min(
+               secondary.audio.size() - offset, (size_t)SOUND_BUFF_SIZE);
+         gambatte::uint_least32_t *audio = &secondary.audio[offset];
+         if (use_cc_resampler)
+            CC_renderaudio((audio_frame_t*)audio, chunk);
+         else
+            blipper_renderaudio((int16_t*)audio, chunk);
+         offset += chunk;
+      }
+      if (!use_cc_resampler)
+      {
+         const unsigned read_avail = blipper_read_avail(resampler_l);
+         audio_out_buffer_read_blipper(read_avail);
+      }
+      libretro_samples_count += secondary.audio.size();
+   }
 #else
    while (gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH, sound_buf.u32, samples) == -1) {}
 #endif
@@ -3240,8 +3530,22 @@ void retro_run()
    if (blend_frames)
       blend_frames();
 
-   video_cb(video_buf, VIDEO_WIDTH, VIDEO_HEIGHT, VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (dual_visible_console == GAMBATTE_DUAL_CONSOLE_A)
+      video_cb(video_buf, GB_SCREEN_WIDTH, VIDEO_HEIGHT,
+            VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
+   else if (dual_visible_console == GAMBATTE_DUAL_CONSOLE_B)
+      video_cb(video_buf + GB_SCREEN_WIDTH, GB_SCREEN_WIDTH, VIDEO_HEIGHT,
+            VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
+   else
+#endif
+      video_cb(video_buf, VIDEO_WIDTH, VIDEO_HEIGHT,
+            VIDEO_PITCH * sizeof(gambatte::video_pixel_t));
 
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (dual_visible_console != GAMBATTE_DUAL_CONSOLE_B)
+   {
+#endif
    if (use_cc_resampler)
       CC_renderaudio((audio_frame_t*)sound_buf.u32, samples);
    else
@@ -3252,6 +3556,24 @@ void retro_run()
       audio_out_buffer_read_blipper(read_avail);
    }
    libretro_samples_count += samples;
+#ifdef NETPLAY_DUAL_INSTANCE
+   if (dual_visible_console != GAMBATTE_DUAL_CONSOLE_B &&
+       !primary_service_audio.empty())
+   {
+      gambatte::uint_least32_t *service_audio = &primary_service_audio[0];
+      const unsigned service_count = (unsigned)primary_service_audio.size();
+      if (use_cc_resampler)
+         CC_renderaudio((audio_frame_t*)service_audio, service_count);
+      else
+      {
+         blipper_renderaudio((int16_t*)service_audio, service_count);
+         const unsigned read_avail = blipper_read_avail(resampler_l);
+         audio_out_buffer_read_blipper(read_avail);
+      }
+      libretro_samples_count += service_count;
+   }
+   }
+#endif
    audio_upload_samples();
 
    /* Apply any 'pending' rumble effects */
@@ -3274,4 +3596,3 @@ void retro_run()
 }
 
 unsigned retro_api_version() { return RETRO_API_VERSION; }
-

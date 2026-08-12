@@ -1,26 +1,25 @@
-[![Build Status](https://travis-ci.org/libretro/gambatte-libretro.svg?branch=master)](https://travis-ci.org/libretro/gambatte-libretro)
-[![Build status](https://ci.appveyor.com/api/projects/status/tejf7jniu1imotag/branch/master?svg=true)](https://ci.appveyor.com/project/bparker06/gambatte-libretro/branch/master)
-
+NextUI netplay builds
 --------------------------------------------------------------------------------
---------------------------------------------------------------------------------
-Copyright (C) 2007 by Sindre Aamås
-aamas@stud.ntnu.no
 
-This program is free software; you can redistribute it and/or modify
-it under the terms of the GNU General Public License version 2 as
-published by the Free Software Foundation.
+The network-enabled libretro build includes a hardened Game Link transport with
+complete packet reads and writes, `TCP_NODELAY`, bounded socket operations, and
+connection pacing diagnostics. Build it with `HAVE_NETWORK=1`.
 
-This program is distributed in the hope that it will be useful,
-but WITHOUT ANY WARRANTY; without even the implied warranty of
-MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-GNU General Public License version 2 for more details.
+An experimental dual-instance build links two Gambatte instances through an
+in-process serial coordinator. It is enabled separately so it does not alter the
+ordinary core:
 
-You should have received a copy of the GNU General Public License
-version 2 along with this program; if not, write to the
-Free Software Foundation, Inc.,
-59 Temple Place - Suite 330, Boston, MA  02111-1307, USA
---------------------------------------------------------------------------------
---------------------------------------------------------------------------------
+    make -f Makefile.libretro HAVE_NETWORK=1 NETPLAY_DUAL_INSTANCE=1
+
+This build identifies itself as `Gambatte Dual v0.5.0-netdual7`. It provides two
+input ports and a frame-boundary service scheduler for timing-sensitive link
+games. Frontends may load separate cartridges with the `gblc` libretro
+subsystem, select console A or B for presentation, access each console's SRAM
+and RTC independently, and create paired checkpoints at idle serial boundaries.
+The versioned extension ABI is declared in
+`libgambatte/libretro/gambatte_dual.h`. Ordinary libretro save states remain
+disabled so a frontend cannot accidentally save only one linked console.
+
 
 About
 --------------------------------------------------------------------------------
@@ -109,24 +108,29 @@ Installing after a compile simply amounts to copying the generated binary
 (either gambatte_qt/bin/gambatte_qt<.exe> or gambatte_sdl/gambatte_sdl<.exe>)
 to wherever you'd like to keep it.
 
-NextUI netplay builds
 --------------------------------------------------------------------------------
 
-The network-enabled libretro build includes a hardened Game Link transport with
-complete packet reads and writes, `TCP_NODELAY`, bounded socket operations, and
-connection pacing diagnostics. Build it with `HAVE_NETWORK=1`.
 
-An experimental dual-instance build links two Gambatte instances through an
-in-process serial coordinator. It is enabled separately so it does not alter the
-ordinary core:
+Copyright (C) 2007 by Sindre Aamås
+aamas@stud.ntnu.no
 
-    make -f Makefile.libretro HAVE_NETWORK=1 NETPLAY_DUAL_INSTANCE=1
+This program is free software; you can redistribute it and/or modify
+it under the terms of the GNU General Public License version 2 as
+published by the Free Software Foundation.
 
-This build identifies itself as `Gambatte Dual v0.5.0-netdual6`. It provides two
-input ports and a frame-boundary service scheduler for timing-sensitive link
-games. It currently loads the same content into both instances, creates the
-secondary worker per frontend frame, and intentionally disables libretro save
-states until paired emulator and coordinator serialization are implemented.
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License version 2 for more details.
+
+You should have received a copy of the GNU General Public License
+version 2 along with this program; if not, write to the
+Free Software Foundation, Inc.,
+59 Temple Place - Suite 330, Boston, MA  02111-1307, USA
+
+
+
+
 
 Thanks
 --------------------------------------------------------------------------------

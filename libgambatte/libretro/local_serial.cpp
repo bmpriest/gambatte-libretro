@@ -114,6 +114,14 @@ bool NetplayLocalSerialBus::waitForService(unsigned endpoint, unsigned timeout_u
 	return service;
 }
 
+bool NetplayLocalSerialBus::isIdle() {
+	pthread_mutex_lock(&mutex_);
+	const bool idle = !stopped_ && !request_pending_ && !response_pending_ &&
+		!active_[0] && !active_[1];
+	pthread_mutex_unlock(&mutex_);
+	return idle;
+}
+
 void NetplayLocalSerialBus::snapshot(NetplayLocalSerialStats& stats) {
 	pthread_mutex_lock(&mutex_);
 	stats.exchanges = exchanges_;
