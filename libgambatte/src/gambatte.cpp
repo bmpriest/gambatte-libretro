@@ -54,7 +54,14 @@ long GB::runFor(gambatte::video_pixel_t *const videoBuf, const int pitch,
 }
    
 void GB::Priv::full_init(bool const clearSram) {
-   SaveState state;
+   /* Value-initialised, not merely declared. Not every member is written by the
+    * save path: sachenOuterMask and sachenLockCount are set only by the Sachen
+    * mapper, so for any other cartridge they used to carry whatever happened to
+    * be on the stack straight into the serialized bytes. Locally that is
+    * invisible - the loading mapper ignores them - but it makes saveState()
+    * non-deterministic, so two machines in identical states serialize
+    * differently, and the same machine serializes differently twice running. */
+   SaveState state = SaveState();
    
    cpu.setStatePtrs(state);
    setInitState(state, cpu.isCgb(), gbaCgbMode, clearSram);
@@ -143,7 +150,7 @@ void GB::setDmgPaletteColor(unsigned palNum, unsigned colorNum, unsigned rgb32) 
 }
 
 bool GB::loadState(const void *data, size_t size) {
-   SaveState state;
+   SaveState state = SaveState();
    p_->cpu.setStatePtrs(state);
 
    if (StateSaver::loadState(state, data, size)) {
@@ -155,14 +162,14 @@ bool GB::loadState(const void *data, size_t size) {
 }
 
 void GB::saveState(void *data) {
-   SaveState state;
+   SaveState state = SaveState();
    p_->cpu.setStatePtrs(state);
    p_->cpu.saveState(state);
    StateSaver::saveState(state, data);
 }
 
 size_t GB::stateSize() const {
-   SaveState state;
+   SaveState state = SaveState();
    p_->cpu.setStatePtrs(state);
    p_->cpu.saveState(state);
    return StateSaver::stateSize(state);
