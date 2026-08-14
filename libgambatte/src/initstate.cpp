@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstring>
 #include <ctime>
+#include <stdint.h>
 
 namespace {
 
@@ -1147,6 +1148,37 @@ static void setInitialDmgIoamhram(unsigned char ioamhram[]) {
 
 } // anon namespace
 
+namespace {
+
+/* Power-on value for the cartridge clocks.
+ *
+ * These are seeded for every cartridge, not only for one that has an RTC, and
+ * they are serialized into every savestate. Reading the host clock here makes
+ * saveState() depend on when it was called, so the same machine serializes
+ * differently twice running and two machines never agree at all.
+ *
+ * A NETPLAY_DUAL_INSTANCE build exists only to be mirrored across two devices,
+ * and no wall-clock reading can be common to both, so it starts from a fixed
+ * epoch instead. Ordinary builds keep the current behaviour.
+ *
+ * This covers power-on only. A cartridge with a real RTC still consults
+ * std::time(0) while running (see rtc.cpp), so two mirrored replicas of an RTC
+ * game will still drift apart by the difference between the two devices'
+ * clocks. Fixing that needs an epoch the two agree on and an RTC that advances
+ * from it, which is a larger change than this one.
+ */
+uint64_t initialClockEpoch() {
+#ifdef NETPLAY_DUAL_INSTANCE
+	/* 2020-01-01T00:00:00Z. Arbitrary, but a plausible-looking date beats 0 for
+	 * any game that shows one before its save has supplied a real value. */
+	return UINT64_C(1577836800);
+#else
+	return static_cast<uint64_t>(std::time(0));
+#endif
+}
+
+} // anonymous namespace
+
 void gambatte::setInitState(SaveState &state, bool const cgb, bool const gbaCgbMode, bool const clearSram) {
 	static unsigned char const cgbObjpDump[0x40] = {
 		0x00, 0x00, 0xF2, 0xAB,
@@ -1336,7 +1368,7 @@ void gambatte::setInitState(SaveState &state, bool const cgb, bool const gbaCgbM
 	state.spu.ch4.nr4 = 0;
 	state.spu.ch4.master = false;
 
-	state.rtc.baseTime = std::time(0);
+	state.rtc.baseTime = initialClockEpoch();
 	state.rtc.haltTime = state.rtc.baseTime;
 	state.rtc.dataDh = 0;
 	state.rtc.dataDl = 0;
@@ -1345,7 +1377,7 @@ void gambatte::setInitState(SaveState &state, bool const cgb, bool const gbaCgbM
 	state.rtc.dataS = 0;
 	state.rtc.lastLatchData = false;
 
-	state.huc3.baseTime = std::time(0);
+	state.huc3.baseTime = initialClockEpoch();
 	state.huc3.haltTime = state.huc3.baseTime;
 	state.huc3.dataTime = 0;
 	state.huc3.writingTime = 0;
