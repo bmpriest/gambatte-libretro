@@ -3431,7 +3431,11 @@ static void* run_secondary_frame(void* opaque)
     * game is not listening on the link will never consume its peer's request,
     * and an unbounded loop here simply spins. The peer's send gives up on its
     * own cycle deadline. */
-   for (int service = 0; service < 64 && local_serial_bus.waitForService(1); service++) {
+   /* Answer anything still on the cable, then hold at the frame barrier until
+    * the peer is also ready to leave. The budget is generous because an
+    * unanswerable request has to be emulated *past* - the sender gives up on a
+    * cycle deadline, and only running lets the peer's position reach it. */
+   for (int service = 0; service < 512 && local_serial_bus.waitForService(1); service++) {
       {
          unsigned service_samples = 32;
          gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
@@ -3439,6 +3443,13 @@ static void* run_secondary_frame(void* opaque)
          context->audio.insert(context->audio.end(), context->sound.u32,
                context->sound.u32 + service_samples);
       }
+   }
+   for (int leave = 0; leave < 512 && !local_serial_bus.leaveFrame(1); leave++) {
+      unsigned service_samples = 32;
+      gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
+            context->sound.u32, SOUND_BUFF_SIZE, service_samples);
+      context->audio.insert(context->audio.end(), context->sound.u32,
+            context->sound.u32 + service_samples);
    }
    local_serial_bus.setActive(1, false);
    context->elapsed_us = dual_now_us() - started;
@@ -3552,15 +3563,26 @@ void retro_run()
     * game is not listening on the link will never consume its peer's request,
     * and an unbounded loop here simply spins. The peer's send gives up on its
     * own cycle deadline. */
-   for (int service = 0; service < 64 && local_serial_bus.waitForService(0); service++) {
+   /* Answer anything still on the cable, then hold at the frame barrier until
+    * the peer is also ready to leave. The budget is generous because an
+    * unanswerable request has to be emulated *past* - the sender gives up on a
+    * cycle deadline, and only running lets the peer's position reach it. */
+   static gambatte::uint_least32_t service_sound[SOUND_BUFF_SIZE];
+   for (int service = 0; service < 512 && local_serial_bus.waitForService(0); service++) {
       {
-         static gambatte::uint_least32_t service_sound[SOUND_BUFF_SIZE];
          unsigned service_samples = 32;
          gb.runFor(video_buf, VIDEO_PITCH, service_sound,
                SOUND_BUFF_SIZE, service_samples);
          primary_service_audio.insert(primary_service_audio.end(),
                service_sound, service_sound + service_samples);
       }
+   }
+   for (int leave = 0; leave < 512 && !local_serial_bus.leaveFrame(0); leave++) {
+      unsigned service_samples = 32;
+      gb.runFor(video_buf, VIDEO_PITCH, service_sound,
+            SOUND_BUFF_SIZE, service_samples);
+      primary_service_audio.insert(primary_service_audio.end(),
+            service_sound, service_sound + service_samples);
    }
    local_serial_bus.setActive(0, false);
    const uint64_t primary_elapsed = dual_now_us() - primary_started;

@@ -84,6 +84,21 @@ public:
 	 * 16.67ms available, while the emulation underneath took two. */
 	bool waitForService(unsigned endpoint);
 
+	/* The frame barrier. Neither console may leave a paired frame while anything
+	 * is still in flight on the cable, and neither may leave before the other is
+	 * also ready to.
+	 *
+	 * Without it, an unanswered send could end simply because the peer's thread
+	 * happened to drop out first - the one ending decided by wall clock rather
+	 * than by emulated state. That is invisible in a game whose clocks are
+	 * always answered, and constant in one that clocks into a partner that is
+	 * not listening.
+	 *
+	 * Returns true when it is safe to leave. Returns false when the peer has a
+	 * request this console should service first: emulate a little and call
+	 * again. */
+	bool leaveFrame(unsigned endpoint);
+
 	unsigned char send(unsigned endpoint, unsigned long cc, unsigned char data, bool fastCgb);
 	bool check(unsigned endpoint, unsigned long cc, unsigned char out,
 	           unsigned char& in, bool& fastCgb);
@@ -96,6 +111,7 @@ private:
 
 	/* Caller holds mutex_. Relative cycle position of an endpoint this frame. */
 	uint64_t position(unsigned endpoint) const;
+	bool liveRequest(unsigned sender, unsigned observer) const;
 	void publish(unsigned endpoint, unsigned long cc);
 	void waitReporting(const char* who, unsigned endpoint);
 
@@ -119,6 +135,7 @@ private:
 
 	bool active_[2];
 	bool running_[2];
+	bool leaving_[2];
 	bool based_[2];
 	unsigned long base_[2];
 	uint64_t pos_[2];
