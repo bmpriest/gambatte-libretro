@@ -75,6 +75,10 @@ public:
 		mem_.setTimeSource(time_source);
 	}
 
+	void shiftCartridgeClock(int64_t seconds) {
+		mem_.shiftCartridgeClock(seconds);
+	}
+
 	void setSaveDir(std::string const &sdir) {
 		mem_.setSaveDir(sdir);
 	}

@@ -141,6 +141,12 @@ namespace gambatte
             huc3_.setTimeSource(timeSource);
          }
 
+         void shiftCartridgeClock(int64_t seconds)
+         {
+            rtc_.shiftBase(seconds);
+            huc3_.shiftBase(seconds);
+         }
+
          void rtcWrite(unsigned data)
          {
             rtc_.write(data);

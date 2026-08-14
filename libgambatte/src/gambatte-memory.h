@@ -139,6 +139,7 @@ public:
 #ifdef HAVE_NETWORK
 	void setSerialIO(SerialIO* serial_io) { serial_io_ = serial_io; }
 	void setTimeSource(TimeSource* time_source) { cart_.setTimeSource(time_source); }
+	void shiftCartridgeClock(int64_t seconds) { cart_.shiftCartridgeClock(seconds); }
 #endif
 	void setEndtime(unsigned long cc, unsigned long inc);
 	void setSoundBuffer(uint_least32_t *buf, std::size_t size) { psg_.setBuffer(buf, size); }

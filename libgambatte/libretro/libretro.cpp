@@ -3362,10 +3362,24 @@ uint64_t retro_dual_get_capabilities(void)
 
 bool retro_dual_set_clock_epochs(uint64_t console_a, uint64_t console_b)
 {
-   if (rom_loaded)
-      return false;
+   /* Allowed with content already loaded, because that is the only time the
+    * frontend can know both values: the epochs are the two players' clocks, and
+    * the peer's arrives in a handshake that happens after the game is up.
+    *
+    * Moving a console's epoch therefore moves the cartridge clock's origin with
+    * it, leaving elapsed time alone. At power-on that turns the fixed epoch
+    * setInitState used into the player's real clock with nothing else changing;
+    * for a cartridge whose save already carries a base time, that base is about
+    * to be overwritten by the save anyway. */
+   const int64_t shift_a = (int64_t)console_a - (int64_t)dual_clock_a.epoch();
+   const int64_t shift_b = (int64_t)console_b - (int64_t)dual_clock_b.epoch();
    dual_clock_a.setEpoch(console_a);
    dual_clock_b.setEpoch(console_b);
+   if (rom_loaded)
+   {
+      gb.shiftCartridgeClock(shift_a);
+      gb2.shiftCartridgeClock(shift_b);
+   }
    dual_clocks_set = true;
    gambatte_log(RETRO_LOG_INFO,
       "GBLC cartridge clocks: A=%llu B=%llu (peer offset %lld s)\n",

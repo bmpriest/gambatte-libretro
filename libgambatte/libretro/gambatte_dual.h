@@ -45,9 +45,13 @@ unsigned retro_dual_get_visible_console(void);
  * game latches it, and no two wall clocks agree.
  *
  * Time then advances from these by emulated frames rather than by either
- * device's clock, so the two replicas stay identical. Call before loading
- * content; without it both consoles share a fixed epoch and the session is
- * still deterministic, just not showing anybody's real time. */
+ * device's clock, so the two replicas stay identical.
+ *
+ * May be called with content already loaded - which is the normal case, since
+ * the peer's clock only arrives once the handshake has run. Each console's
+ * cartridge clock is rebased by the same amount its epoch moved, so elapsed
+ * time is unaffected. Without the call both consoles share a fixed epoch and
+ * the session is still deterministic, just not showing anybody's real time. */
 bool retro_dual_set_clock_epochs(uint64_t console_a, uint64_t console_b);
 
 void *retro_dual_get_memory_data(unsigned console, unsigned id);

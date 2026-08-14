@@ -56,6 +56,14 @@ namespace gambatte
             baseTime_ = baseTime;
          }
 
+         /* Move this clock's origin with its time source, so that however long
+          * the cartridge thinks it has been running stays what it was. */
+         void shiftBase(int64_t seconds)
+         {
+            baseTime_ = (uint64_t)((int64_t)baseTime_ + seconds);
+            haltTime_ = (uint64_t)((int64_t)haltTime_ + seconds);
+         }
+
          void latch(const unsigned data)
          {
             if (!lastLatchData_ && data == 1)

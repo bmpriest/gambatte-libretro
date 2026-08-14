@@ -101,6 +101,11 @@ public:
 	/** Sets where this console's cartridge clock reads the time of day from.
 	    Null, the default, means the host clock. See timesource.h. */
 	void setTimeSource(TimeSource *time_source);
+
+	/** Moves the cartridge clock's origin by the given number of seconds, so
+	    that elapsed time is unchanged when the time source moves under it.
+	    Only meaningful alongside setTimeSource. */
+	void shiftCartridgeClock(int64_t seconds);
 	
 	/** Sets the directory used for storing save data. The default is the same directory as the ROM Image file. */
 	void setSaveDir(const std::string &sdir);
