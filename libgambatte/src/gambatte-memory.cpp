@@ -163,13 +163,23 @@ void Memory::startSerialTransfer(unsigned long cc, unsigned char data, bool fast
 }
 
 void Memory::checkSerial(unsigned long const cc) {
+	if (serial_io_ == 0)
+		return;
+
+	/* Report progress on every pass, not only while a transfer is wanted. A
+	 * cable that has to answer deterministically needs to know how far each
+	 * console has emulated; without this a console busy elsewhere looks
+	 * indistinguishable from one that has finished, and its peer cannot tell
+	 * whether a request is still coming. Implementations that do not care
+	 * ignore it. */
+	serial_io_->advance(cc);
+
 	// Periodically checks if serial data is received
-	if ((serial_io_ != 0) &&
-		 ((ioamhram_[0x102] & 0x80) == 0x80) &&
+	if (((ioamhram_[0x102] & 0x80) == 0x80) &&
 		 (intreq_.eventTime(intevent_serial) == disabled_time)) {
 		unsigned char data;
 		bool fastCgb;
-		if (serial_io_->check(ioamhram_[0x101], data, fastCgb)) {
+		if (serial_io_->check(cc, ioamhram_[0x101], data, fastCgb)) {
 			startSerialTransfer(cc, data, fastCgb);
 		}
 	}
@@ -691,7 +701,7 @@ void Memory::nontrivial_ff_write(unsigned const p, unsigned data, unsigned long 
       {
 			unsigned char receivedByte = 0xFF;
 			if (serial_io_ != 0)
-				receivedByte = serial_io_->send(ioamhram_[0x101], (data & isCgb() * 2));
+				receivedByte = serial_io_->send(cc, ioamhram_[0x101], (data & isCgb() * 2));
 			startSerialTransfer(cc, receivedByte, (data & isCgb() * 2));
       }
 #else

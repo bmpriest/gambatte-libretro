@@ -20,8 +20,10 @@ class NetSerial : public gambatte::SerialIO
 		           bool local_link = false);
 		void stop();
 
-		virtual bool check(unsigned char out, unsigned char& in, bool& fastCgb);
-		virtual unsigned char send(unsigned char data, bool fastCgb);
+		/* The network cable has a real peer on the far end and no notion of the
+		 * local console's cycle counter, so the cycle is accepted and ignored. */
+		virtual bool check(unsigned long cc, unsigned char out, unsigned char& in, bool& fastCgb);
+		virtual unsigned char send(unsigned long cc, unsigned char data, bool fastCgb);
 
 	private:
 		bool startServerSocket();
