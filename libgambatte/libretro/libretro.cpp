@@ -3511,11 +3511,17 @@ void retro_run()
          if (read_avail >= (BLIP_BUFFER_SIZE >> 1))
             audio_out_buffer_read_blipper(read_avail);
       }
-
-      libretro_samples_count += samples;
 #ifdef NETPLAY_DUAL_INSTANCE
       }
+      /* Outside the visibility test on purpose. This counter drives the frame
+       * dupe detection at the top of retro_run, which returns without advancing
+       * *either* console - so it must be the same number on every device
+       * running this pair, and only console A is common to all of them. Inside
+       * the test, a device showing console B paced itself from a different
+       * machine and skipped different frames, and two replicas fed the same
+       * inputs diverged with nothing else wrong. */
 #endif
+      libretro_samples_count += samples;
       samples = SOUND_SAMPLES_PER_RUN;
    }
 #ifdef NETPLAY_DUAL_INSTANCE
@@ -3551,7 +3557,8 @@ void retro_run()
          const unsigned read_avail = blipper_read_avail(resampler_l);
          audio_out_buffer_read_blipper(read_avail);
       }
-      libretro_samples_count += secondary.audio.size();
+      /* Console B's audio is presented here but deliberately does not feed
+       * libretro_samples_count: pacing comes from console A on every device. */
    }
 #else
    while (gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH, sound_buf.u32, samples) == -1) {}
@@ -3587,20 +3594,24 @@ void retro_run()
       unsigned read_avail = blipper_read_avail(resampler_l);
       audio_out_buffer_read_blipper(read_avail);
    }
+#ifdef NETPLAY_DUAL_INSTANCE
+   }
+#endif
    libretro_samples_count += samples;
 #ifdef NETPLAY_DUAL_INSTANCE
-   if (dual_visible_console != GAMBATTE_DUAL_CONSOLE_B &&
-       !primary_service_audio.empty())
+   if (!primary_service_audio.empty())
    {
       const unsigned service_count = (unsigned)primary_service_audio.size();
-      audio_render_bounded(&primary_service_audio[0], service_count);
-      if (!use_cc_resampler)
+      if (dual_visible_console != GAMBATTE_DUAL_CONSOLE_B)
       {
-         const unsigned read_avail = blipper_read_avail(resampler_l);
-         audio_out_buffer_read_blipper(read_avail);
+         audio_render_bounded(&primary_service_audio[0], service_count);
+         if (!use_cc_resampler)
+         {
+            const unsigned read_avail = blipper_read_avail(resampler_l);
+            audio_out_buffer_read_blipper(read_avail);
+         }
       }
       libretro_samples_count += service_count;
-   }
    }
 #endif
    audio_upload_samples();
