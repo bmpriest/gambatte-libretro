@@ -90,6 +90,7 @@ NetplayLocalSerialBus::NetplayLocalSerialBus()
 	pthread_cond_init(&changed_, 0);
 	active_[0] = active_[1] = false;
 	running_[0] = running_[1] = false;
+	leaving_[0] = leaving_[1] = false;
 	based_[0] = based_[1] = false;
 	base_[0] = base_[1] = 0;
 	pos_[0] = pos_[1] = 0;
@@ -116,6 +117,7 @@ void NetplayLocalSerialBus::reset() {
 	pthread_mutex_lock(&mutex_);
 	active_[0] = active_[1] = false;
 	running_[0] = running_[1] = false;
+	leaving_[0] = leaving_[1] = false;
 	based_[0] = based_[1] = false;
 	base_[0] = base_[1] = 0;
 	pos_[0] = pos_[1] = 0;
@@ -150,8 +152,19 @@ void NetplayLocalSerialBus::beginFrame() {
 	 * frame depend on which thread was scheduled first. */
 	active_[0] = active_[1] = true;
 	running_[0] = running_[1] = true;
+	leaving_[0] = leaving_[1] = false;
 	pthread_cond_broadcast(&changed_);
 	pthread_mutex_unlock(&mutex_);
+}
+
+/* Caller holds mutex_. Is `sender` clocking a transfer that `observer` can still
+ * answer? A request outlives its usefulness once the observer has emulated past
+ * the sender's cycle deadline, at which point the sender abandons it and reads
+ * 0xFF. Sender and observer therefore have to agree on that window in emulated
+ * cycles, or the same transfer resolves differently on the two devices. */
+bool NetplayLocalSerialBus::liveRequest(unsigned sender, unsigned observer) const {
+	return req_active_[sender] &&
+		pos_[observer] <= req_at_[sender] + TRANSFER_DEADLINE_CYCLES;
 }
 
 uint64_t NetplayLocalSerialBus::position(unsigned endpoint) const {
@@ -202,12 +215,46 @@ bool NetplayLocalSerialBus::waitForService(unsigned endpoint) {
 	pthread_mutex_lock(&mutex_);
 	/* Waits on the peer still *running*, not on it still being active. Waiting
 	 * on activity deadlocks: both consoles finish, both wait here, and neither
-	 * can drop its activity because that happens after this loop. */
-	while (!stopped_ && running_[peer] && !req_active_[peer])
+	 * can drop its activity because that happens after this loop.
+	 *
+	 * Only a request still inside its cycle deadline is worth servicing; check()
+	 * refuses an expired one, so returning true for it would spend emulated
+	 * slices waiting on the sender to notice, which is wall-clock timing. */
+	while (!stopped_ && running_[peer] && !liveRequest(peer, endpoint))
 		waitReporting("waitForService", endpoint);
-	const bool service = !stopped_ && req_active_[peer];
+	const bool service = !stopped_ && liveRequest(peer, endpoint);
 	pthread_mutex_unlock(&mutex_);
 	return service;
+}
+
+bool NetplayLocalSerialBus::leaveFrame(unsigned endpoint) {
+	if (endpoint > 1) return true;
+	const unsigned peer = endpoint ^ 1;
+	pthread_mutex_lock(&mutex_);
+	leaving_[endpoint] = true;
+	pthread_cond_broadcast(&changed_);
+
+	for (;;) {
+		if (stopped_) break;
+		/* Something for us to answer: the caller emulates and comes back. A
+		 * request already past its cycle deadline is not answerable - check()
+		 * will refuse it - so servicing it would just burn the caller's budget
+		 * on however many slices it took the sender to wake up and give up,
+		 * which is a wall-clock quantity. Wait for it instead. */
+		if (liveRequest(peer, endpoint)) {
+			pthread_mutex_unlock(&mutex_);
+			return false;
+		}
+		/* Safe to go only once the peer is also done and the cable is quiet. Our
+		 * own request still outstanding means the peer has not resolved it yet,
+		 * so wait rather than vanish and leave it to be answered by nobody. */
+		if (leaving_[peer] && !req_active_[endpoint] &&
+		    !resp_ready_[0] && !resp_ready_[1])
+			break;
+		waitReporting("leaveFrame", endpoint);
+	}
+	pthread_mutex_unlock(&mutex_);
+	return true;
 }
 
 bool NetplayLocalSerialBus::peerActive(unsigned endpoint) {
@@ -259,6 +306,21 @@ unsigned char NetplayLocalSerialBus::send(unsigned endpoint, unsigned long cc,
 	for (;;) {
 		if (stopped_ || generation != generation_) break;
 
+		/* The peer consumed our request through check(). This is tested before
+		 * anything about the peer's own request, because a delivered response is
+		 * unconditionally ours: the peer may have answered us and then gone
+		 * straight on to clock a transfer of its own, and leaving by any of the
+		 * paths below would strand the response with nobody left to collect it.
+		 * That is what hung the frame barrier - resp_ready_ set, req_active_
+		 * clear, and both consoles waiting for the cable to fall quiet. */
+		if (resp_ready_[endpoint]) {
+			response = resp_byte_[endpoint];
+			resp_ready_[endpoint] = false;
+			req_active_[endpoint] = false;
+			got = true;
+			break;
+		}
+
 		if (req_active_[peer]) {
 			if (req_at_[peer] == req_at_[endpoint]) {
 				/* Both consoles asserted their own clock at the same emulated
@@ -287,15 +349,6 @@ unsigned char NetplayLocalSerialBus::send(unsigned endpoint, unsigned long cc,
 				break;
 			}
 			/* The peer's clock is earlier; let it resolve first. */
-		}
-
-		/* The peer consumed our request through check(). */
-		if (resp_ready_[endpoint]) {
-			response = resp_byte_[endpoint];
-			resp_ready_[endpoint] = false;
-			req_active_[endpoint] = false;
-			got = true;
-			break;
 		}
 
 		/* Give up only once the peer has emulated past a fixed cycle deadline
@@ -340,8 +393,14 @@ bool NetplayLocalSerialBus::check(unsigned endpoint, unsigned long cc,
 		 * at exactly this cycle is not yet visible to endpoint 0 and is visible
 		 * to endpoint 1. Permitting the order without enforcing it here left
 		 * *which* check consumed a request decided by arrival: the totals
-		 * matched but the emulated states did not. */
-		const bool visible = req_active_[peer] &&
+		 * matched but the emulated states did not.
+		 *
+		 * The upper bound is the same cycle deadline send() abandons a request
+		 * at. Without it a console could answer a request its sender had already
+		 * given up on - or was about to - and which of the two happened was
+		 * decided by thread timing, not by emulated state: the same transfer
+		 * read 0xFF on one device and the peer's byte on the other. */
+		const bool visible = liveRequest(peer, endpoint) &&
 			(endpoint == 0 ? req_at_[peer] < at : req_at_[peer] <= at);
 		if (visible) {
 			in = req_byte_[peer];
