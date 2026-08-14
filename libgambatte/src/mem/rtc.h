@@ -102,6 +102,22 @@ namespace gambatte
                                : static_cast<uint64_t>(std::time(0));
          }
 
+         /* Seconds the cartridge has been running, never negative.
+          *
+          * A saved clock can legitimately be *ahead* of the current one: the
+          * player crossed a timezone, the console's clock was reset, or - for a
+          * paired session - the two devices' clocks disagree and each console
+          * keeps its own owner's. Subtracting unsigned then produced a value
+          * near 2^64, and doLatch normalises by subtracting 0x1FF days at a
+          * time, so the emulator hung for the rest of the universe on the first
+          * latch. Treating a clock that has gone backwards as "no time has
+          * passed" is both survivable and identical on two devices. */
+         uint64_t elapsedSince(uint64_t from) const
+         {
+            const uint64_t at = (dataDh_ & 0x40) ? haltTime_ : now();
+            return at > from ? at - from : 0;
+         }
+
          unsigned char *activeData_;
          void (Rtc::*activeSet_)(unsigned);
          TimeSource *timeSource_;

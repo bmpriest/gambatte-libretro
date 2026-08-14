@@ -41,7 +41,7 @@ namespace gambatte
 
    void Rtc::doLatch()
    {
-      uint64_t tmp = ((dataDh_ & 0x40) ? haltTime_ : now()) - baseTime_;
+      uint64_t tmp = elapsedSince(baseTime_);
 
       while (tmp > 0x1FF * 86400)
       {
@@ -124,8 +124,7 @@ namespace gambatte
 
    void Rtc::setDh(const unsigned new_dh)
    {
-      const uint64_t unixtime     = (dataDh_ & 0x40) ? haltTime_ : now();
-      const uint64_t old_highdays = ((unixtime - baseTime_) / 86400) & 0x100;
+      const uint64_t old_highdays = (elapsedSince(baseTime_) / 86400) & 0x100;
       baseTime_                   += old_highdays * 86400;
       baseTime_                   -= ((new_dh & 0x1) << 8) * 86400;
 
@@ -140,32 +139,28 @@ namespace gambatte
 
    void Rtc::setDl(const unsigned new_lowdays)
    {
-      const uint64_t unixtime = (dataDh_ & 0x40) ? haltTime_ : now();
-      const uint64_t old_lowdays = ((unixtime - baseTime_) / 86400) & 0xFF;
+      const uint64_t old_lowdays = (elapsedSince(baseTime_) / 86400) & 0xFF;
       baseTime_ += old_lowdays * 86400;
       baseTime_ -= new_lowdays * 86400;
    }
 
    void Rtc::setH(const unsigned new_hours)
    {
-      const uint64_t unixtime = (dataDh_ & 0x40) ? haltTime_ : now();
-      const uint64_t old_hours = ((unixtime - baseTime_) / 3600) % 24;
+      const uint64_t old_hours = (elapsedSince(baseTime_) / 3600) % 24;
       baseTime_ += old_hours * 3600;
       baseTime_ -= new_hours * 3600;
    }
 
    void Rtc::setM(const unsigned new_minutes)
    {
-      const uint64_t unixtime = (dataDh_ & 0x40) ? haltTime_ : now();
-      const uint64_t old_minutes = ((unixtime - baseTime_) / 60) % 60;
+      const uint64_t old_minutes = (elapsedSince(baseTime_) / 60) % 60;
       baseTime_ += old_minutes * 60;
       baseTime_ -= new_minutes * 60;
    }
 
    void Rtc::setS(const unsigned new_seconds)
    {
-      const uint64_t unixtime = (dataDh_ & 0x40) ? haltTime_ : now();
-      baseTime_ += (unixtime - baseTime_) % 60;
+      baseTime_ += elapsedSince(baseTime_) % 60;
       baseTime_ -= new_seconds;
    }
 }
