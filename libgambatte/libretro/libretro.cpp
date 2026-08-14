@@ -147,7 +147,7 @@ static const uint64_t GB_CYCLES_PER_SECOND = 4194304;
 
 class DualCartridgeClock : public gambatte::TimeSource {
 public:
-   DualCartridgeClock() : epoch_(0) {}
+   DualCartridgeClock() : epoch_(gambatte::DUAL_POWER_ON_EPOCH) {}
    void setEpoch(uint64_t epoch) { epoch_ = epoch; }
    uint64_t epoch() const { return epoch_; }
    virtual uint64_t now() const
@@ -3127,6 +3127,17 @@ bool retro_load_game(const struct retro_game_info *info)
     * setInitState uses and the pair is still deterministic - just not showing
     * anybody's real time. */
    dual_clock_frames = 0;
+   /* setInitState has just put both cartridge clocks at the fixed power-on
+    * epoch. Move them on to whatever epochs are in effect rather than clearing
+    * those: loading content is not only how a session starts, it is also how a
+    * pair of *different* linked cartridges is built, and that happens after the
+    * two devices have already agreed their clocks. Clearing here would throw
+    * that agreement away halfway through the handshake. On a first load the
+    * epochs are still the power-on value and this shifts by zero. */
+   gb.shiftCartridgeClock((int64_t)dual_clock_a.epoch() -
+         (int64_t)gambatte::DUAL_POWER_ON_EPOCH);
+   gb2.shiftCartridgeClock((int64_t)dual_clock_b.epoch() -
+         (int64_t)gambatte::DUAL_POWER_ON_EPOCH);
    if (!dual_clocks_set)
       gambatte_log(RETRO_LOG_INFO,
          "GBLC cartridge clocks not set by the frontend; both consoles will "

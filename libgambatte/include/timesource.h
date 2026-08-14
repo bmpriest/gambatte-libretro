@@ -22,6 +22,18 @@
 
 namespace gambatte {
 
+/* Power-on value for a paired cartridge's clock: 2020-01-01T00:00:00Z.
+ *
+ * setInitState seeds every cartridge clock from this in a NETPLAY_DUAL_INSTANCE
+ * build, because the host clock it would otherwise read is exactly what two
+ * mirrored devices cannot agree on. A frontend that installs real epochs later
+ * moves each clock on from here, so both ends need the same starting value -
+ * hence one definition rather than two constants that can drift apart.
+ *
+ * Arbitrary, but a plausible-looking date beats 0 for any game that shows one
+ * before its save has supplied a real value. */
+const uint64_t DUAL_POWER_ON_EPOCH = UINT64_C(1577836800);
+
 /* Where a cartridge's real-time clock reads the time of day from.
  *
  * MBC3 and HuC3 carts consult the host clock directly (see mem/rtc.cpp and
