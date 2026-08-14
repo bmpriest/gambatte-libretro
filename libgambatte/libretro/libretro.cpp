@@ -3411,7 +3411,6 @@ static void* run_secondary_frame(void* opaque)
    DualRunContext* context = static_cast<DualRunContext*>(opaque);
    const uint64_t started = dual_now_us();
    context->audio.clear();
-   local_serial_bus.setActive(1, true);
    do {
       context->samples = SOUND_SAMPLES_PER_RUN;
       const long result = gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
@@ -3420,18 +3419,28 @@ static void* run_secondary_frame(void* opaque)
             context->sound.u32 + context->samples);
       if (result != -1) break;
    } while (true);
-   local_serial_bus.setActive(1, false);
-   while (local_serial_bus.peerActive(1)) {
-      if (local_serial_bus.waitForService(1, 250)) {
-         local_serial_bus.setActive(1, true);
+   local_serial_bus.setRunning(1, false);
+   /* This console's frame is done, but its peer may still clock a transfer
+    * before finishing its own. Stay available and answer, blocking on the bus
+    * rather than polling it: the old 250us poll ran about sixty times a frame
+    * for roughly 15ms of a 16.67ms budget, and how often it fired depended on
+    * the scheduler rather than on the emulation. Activity is not toggled here
+    * either - a console that flickered inactive looked finished to its peer,
+    * which is a race with the same shape as the one at frame start. */
+   /* Bounded, and bounded by a count rather than by time: a console whose own
+    * game is not listening on the link will never consume its peer's request,
+    * and an unbounded loop here simply spins. The peer's send gives up on its
+    * own cycle deadline. */
+   for (int service = 0; service < 64 && local_serial_bus.waitForService(1); service++) {
+      {
          unsigned service_samples = 32;
          gb2.runFor(video_buf + GB_SCREEN_WIDTH, VIDEO_PITCH,
                context->sound.u32, SOUND_BUFF_SIZE, service_samples);
          context->audio.insert(context->audio.end(), context->sound.u32,
                context->sound.u32 + service_samples);
-         local_serial_bus.setActive(1, false);
       }
    }
+   local_serial_bus.setActive(1, false);
    context->elapsed_us = dual_now_us() - started;
    return NULL;
 }
@@ -3482,6 +3491,13 @@ void retro_run()
    static DualRunContext secondary;
    static std::vector<gambatte::uint_least32_t> primary_service_audio;
    primary_service_audio.clear();
+   /* Opens the paired frame: rebases both consoles' cycle origins so their
+    * positions are comparable, and marks both active before either starts.
+    * Announcing activity from inside each console instead left a window where
+    * whichever got going first saw a peer that had not yet announced, read that
+    * as "finished, will never answer", and abandoned a transfer the peer was
+    * about to take. */
+   local_serial_bus.beginFrame();
    pthread_t secondary_thread;
    const uint64_t pair_started = dual_now_us();
    bool secondary_started = pthread_create(&secondary_thread, NULL,
@@ -3493,7 +3509,6 @@ void retro_run()
 
 #ifdef NETPLAY_DUAL_INSTANCE
    const uint64_t primary_started = dual_now_us();
-   local_serial_bus.setActive(0, true);
 #endif
    while (gb.runFor(video_buf, VIDEO_PITCH, sound_buf.u32, SOUND_BUFF_SIZE, samples) == -1)
    {
@@ -3525,19 +3540,29 @@ void retro_run()
       samples = SOUND_SAMPLES_PER_RUN;
    }
 #ifdef NETPLAY_DUAL_INSTANCE
-   local_serial_bus.setActive(0, false);
-   while (local_serial_bus.peerActive(0)) {
-      if (local_serial_bus.waitForService(0, 250)) {
-         local_serial_bus.setActive(0, true);
+   local_serial_bus.setRunning(0, false);
+   /* This console's frame is done, but its peer may still clock a transfer
+    * before finishing its own. Stay available and answer, blocking on the bus
+    * rather than polling it: the old 250us poll ran about sixty times a frame
+    * for roughly 15ms of a 16.67ms budget, and how often it fired depended on
+    * the scheduler rather than on the emulation. Activity is not toggled here
+    * either - a console that flickered inactive looked finished to its peer,
+    * which is a race with the same shape as the one at frame start. */
+   /* Bounded, and bounded by a count rather than by time: a console whose own
+    * game is not listening on the link will never consume its peer's request,
+    * and an unbounded loop here simply spins. The peer's send gives up on its
+    * own cycle deadline. */
+   for (int service = 0; service < 64 && local_serial_bus.waitForService(0); service++) {
+      {
          static gambatte::uint_least32_t service_sound[SOUND_BUFF_SIZE];
          unsigned service_samples = 32;
          gb.runFor(video_buf, VIDEO_PITCH, service_sound,
                SOUND_BUFF_SIZE, service_samples);
          primary_service_audio.insert(primary_service_audio.end(),
                service_sound, service_sound + service_samples);
-         local_serial_bus.setActive(0, false);
       }
    }
+   local_serial_bus.setActive(0, false);
    const uint64_t primary_elapsed = dual_now_us() - primary_started;
 #endif
 #ifdef DUAL_MODE

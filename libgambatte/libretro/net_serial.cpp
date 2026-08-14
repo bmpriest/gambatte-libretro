@@ -299,7 +299,7 @@ bool NetSerial::startClientSocket()
 	return true;
 }
 
-unsigned char NetSerial::send(unsigned char data, bool fastCgb)
+unsigned char NetSerial::send(unsigned long /*cc*/, unsigned char data, bool fastCgb)
 {
 	unsigned char buffer[2];
 
@@ -333,7 +333,7 @@ unsigned char NetSerial::send(unsigned char data, bool fastCgb)
 	return buffer[0];
 }
 
-bool NetSerial::check(unsigned char out, unsigned char& in, bool& fastCgb)
+bool NetSerial::check(unsigned long /*cc*/, unsigned char out, unsigned char& in, bool& fastCgb)
 {
 	unsigned char buffer[2];
 #ifdef _WIN32
