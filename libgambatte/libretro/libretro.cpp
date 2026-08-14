@@ -124,6 +124,45 @@ static int dual_mirror_input = 0;
 static unsigned dual_visible_console = GAMBATTE_DUAL_CONSOLE_BOTH;
 static const struct retro_game_info* dual_second_game_info = NULL;
 
+/* Cartridge clocks for a paired session.
+ *
+ * A cart with an RTC asks what time it is, and the answer becomes emulated
+ * state the moment the game latches it. Two devices mirroring the same pair
+ * therefore cannot each read their own wall clock - measured 9 seconds apart on
+ * the pair this was found on, which is a different day counter and a different
+ * savestate.
+ *
+ * So each console gets an epoch, and time advances from it by *emulated*
+ * frames. The epochs are the two players' real clocks, handed down identically
+ * to both devices by the frontend, so each cartridge still shows its own
+ * owner's time of day; the advance is a count both devices agree on exactly.
+ *
+ * A paused game has a stopped clock, which real hardware would not do. That is
+ * the price of an answer two devices can both arrive at, and it is invisible
+ * next to the alternative of the two of them disagreeing about what day it is.
+ */
+static uint64_t dual_clock_frames = 0;
+static const uint64_t GB_CYCLES_PER_FRAME = 70224;
+static const uint64_t GB_CYCLES_PER_SECOND = 4194304;
+
+class DualCartridgeClock : public gambatte::TimeSource {
+public:
+   DualCartridgeClock() : epoch_(0) {}
+   void setEpoch(uint64_t epoch) { epoch_ = epoch; }
+   uint64_t epoch() const { return epoch_; }
+   virtual uint64_t now() const
+   {
+      return epoch_ +
+         dual_clock_frames * GB_CYCLES_PER_FRAME / GB_CYCLES_PER_SECOND;
+   }
+private:
+   uint64_t epoch_;
+};
+
+static DualCartridgeClock dual_clock_a;
+static DualCartridgeClock dual_clock_b;
+static bool dual_clocks_set = false;
+
 struct DualDiagnostics {
    uint64_t frames;
    uint64_t primary_us;
@@ -151,6 +190,9 @@ static uint32_t dual_u32_us(uint64_t value)
 static void dual_record_frame(uint64_t primary_us, uint64_t secondary_us,
       uint64_t pair_us)
 {
+   /* One paired frame of emulated time, on both devices alike. This is what the
+    * cartridge clocks advance from; dual_diag below is only diagnostics. */
+   dual_clock_frames++;
    dual_diag.frames++;
    dual_diag.primary_us += primary_us;
    dual_diag.secondary_us += secondary_us;
@@ -1878,6 +1920,8 @@ void retro_init(void)
    gb2.setInputGetter(&gb_input2);
    gb.setSerialIO(&local_serial_a);
    gb2.setSerialIO(&local_serial_b);
+   gb.setTimeSource(&dual_clock_a);
+   gb2.setTimeSource(&dual_clock_b);
 #else
    gb2.setInputGetter(&gb_input);
 #endif
@@ -3076,6 +3120,17 @@ bool retro_load_game(const struct retro_game_info *info)
    local_serial_bus.reset();
    gb.setSerialIO(&local_serial_a);
    gb2.setSerialIO(&local_serial_b);
+   gb.setTimeSource(&dual_clock_a);
+   gb2.setTimeSource(&dual_clock_b);
+   /* Content load is a power-on: the cartridge clocks start where the frontend
+    * put them. If it never set them, both consoles share the fixed epoch
+    * setInitState uses and the pair is still deterministic - just not showing
+    * anybody's real time. */
+   dual_clock_frames = 0;
+   if (!dual_clocks_set)
+      gambatte_log(RETRO_LOG_INFO,
+         "GBLC cartridge clocks not set by the frontend; both consoles will "
+         "share the fixed power-on epoch\n");
    memset(&dual_diag, 0, sizeof(dual_diag));
    const char* mirror = getenv("GBLC_MIRROR_INPUT");
    dual_mirror_input = mirror && mirror[0] && strcmp(mirror, "0") != 0;
@@ -3246,7 +3301,12 @@ static gambatte::GB *dual_gb(unsigned console)
 }
 
 static const uint32_t DUAL_STATE_MAGIC = 0x31444247u; /* "GBD1" */
-static const size_t DUAL_STATE_HEADER_SIZE = 16;
+/* magic, abi, size A, size B, then the paired cartridge clock: the frame count
+ * both consoles advance their time of day from, and the two epochs. Without
+ * them a resync would leave the devices agreeing on console state while
+ * disagreeing about what time it is - a divergence that stays hidden until a
+ * game next latches its RTC. */
+static const size_t DUAL_STATE_HEADER_SIZE = 40;
 
 static void dual_write_u32(unsigned char *p, uint32_t value)
 {
@@ -3260,6 +3320,17 @@ static uint32_t dual_read_u32(const unsigned char *p)
 {
    return (uint32_t)p[0] | ((uint32_t)p[1] << 8) |
       ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24);
+}
+
+static void dual_write_u64(unsigned char *p, uint64_t value)
+{
+   dual_write_u32(p, (uint32_t)value);
+   dual_write_u32(p + 4, (uint32_t)(value >> 32));
+}
+
+static uint64_t dual_read_u64(const unsigned char *p)
+{
+   return (uint64_t)dual_read_u32(p) | ((uint64_t)dual_read_u32(p + 4) << 32);
 }
 
 static void dual_reset_output_history(void)
@@ -3285,7 +3356,22 @@ uint64_t retro_dual_get_capabilities(void)
       GAMBATTE_DUAL_CAP_CONSOLE_MEMORY |
       GAMBATTE_DUAL_CAP_VISIBLE_CONSOLE |
       GAMBATTE_DUAL_CAP_PAIRED_CHECKPOINT |
-      GAMBATTE_DUAL_CAP_TARGETED_RESET;
+      GAMBATTE_DUAL_CAP_TARGETED_RESET |
+      GAMBATTE_DUAL_CAP_CLOCK_EPOCHS;
+}
+
+bool retro_dual_set_clock_epochs(uint64_t console_a, uint64_t console_b)
+{
+   if (rom_loaded)
+      return false;
+   dual_clock_a.setEpoch(console_a);
+   dual_clock_b.setEpoch(console_b);
+   dual_clocks_set = true;
+   gambatte_log(RETRO_LOG_INFO,
+      "GBLC cartridge clocks: A=%llu B=%llu (peer offset %lld s)\n",
+      (unsigned long long)console_a, (unsigned long long)console_b,
+      (long long)((int64_t)console_b - (int64_t)console_a));
+   return true;
 }
 
 bool retro_dual_set_visible_console(unsigned console)
@@ -3360,6 +3446,9 @@ bool retro_dual_serialize(void *data, size_t size)
    dual_write_u32(bytes + 4, GAMBATTE_DUAL_ABI_VERSION);
    dual_write_u32(bytes + 8, (uint32_t)a_size);
    dual_write_u32(bytes + 12, (uint32_t)b_size);
+   dual_write_u64(bytes + 16, dual_clock_frames);
+   dual_write_u64(bytes + 24, dual_clock_a.epoch());
+   dual_write_u64(bytes + 32, dual_clock_b.epoch());
    gb.saveState(bytes + DUAL_STATE_HEADER_SIZE);
    gb2.saveState(bytes + DUAL_STATE_HEADER_SIZE + a_size);
    return true;
@@ -3389,6 +3478,9 @@ bool retro_dual_unserialize(const void *data, size_t size)
       gb2.loadState(&old_b[0], b_size);
       return false;
    }
+   dual_clock_frames = dual_read_u64(bytes + 16);
+   dual_clock_a.setEpoch(dual_read_u64(bytes + 24));
+   dual_clock_b.setEpoch(dual_read_u64(bytes + 32));
    local_serial_bus.reset();
    dual_reset_output_history();
    return true;

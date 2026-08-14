@@ -19,6 +19,8 @@
 #ifndef RTC_H
 #define RTC_H
 
+#include "../../include/timesource.h"
+
 #include <ctime>
 #include <stdint.h>
 
@@ -31,6 +33,13 @@ namespace gambatte
    {
       public:
          Rtc();
+
+         /* Null - the default, and every ordinary session - means read the host
+          * clock. See timesource.h for why a paired session cannot. */
+         void setTimeSource(TimeSource *timeSource)
+         {
+            timeSource_ = timeSource;
+         }
 
          const unsigned char* getActive() const
          {
@@ -76,8 +85,18 @@ namespace gambatte
          }
 
       private:
+         /* Time of day for this cartridge. Every reading in rtc.cpp goes
+          * through here so that a paired session has exactly one place where
+          * the clock is decided. */
+         uint64_t now() const
+         {
+            return timeSource_ ? timeSource_->now()
+                               : static_cast<uint64_t>(std::time(0));
+         }
+
          unsigned char *activeData_;
          void (Rtc::*activeSet_)(unsigned);
+         TimeSource *timeSource_;
          uint64_t baseTime_;
          uint64_t haltTime_;
          unsigned char index_;

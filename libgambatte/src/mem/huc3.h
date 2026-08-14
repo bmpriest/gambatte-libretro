@@ -26,6 +26,8 @@ enum
     HUC3_NONE = 2
 };
 
+#include "../../include/timesource.h"
+
 #include <ctime>
 #include <stdint.h>
 
@@ -36,6 +38,11 @@ struct SaveState;
 class HuC3Chip {
 public:
 	HuC3Chip();
+
+	/* Null - the default, and every ordinary session - means read the host
+	 * clock. See timesource.h for why a paired session cannot. */
+	void setTimeSource(TimeSource *timeSource) { timeSource_ = timeSource; }
+
 	uint64_t baseTime() const { return baseTime_; }
 	void setBaseTime(uint64_t baseTime) { baseTime_ = baseTime; }
 
@@ -57,6 +64,15 @@ public:
 	void write(unsigned p, unsigned data);
 
 private:
+	/* Time of day for this cartridge. Every reading in huc3.cpp goes through
+	 * here so that a paired session has exactly one place where the clock is
+	 * decided. */
+	uint64_t now() const {
+		return timeSource_ ? timeSource_->now()
+		                   : static_cast<uint64_t>(std::time(0));
+	}
+
+	TimeSource *timeSource_;
 	uint64_t baseTime_;
 	uint64_t haltTime_;
 	unsigned dataTime_;

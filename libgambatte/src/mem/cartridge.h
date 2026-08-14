@@ -133,6 +133,14 @@ namespace gambatte
             return gambatte::isCgb(memptrs_);
          }
 
+         /* Both cartridge clocks come from the same source: a console has
+          * one time of day, whichever mapper is asking. */
+         void setTimeSource(TimeSource *timeSource)
+         {
+            rtc_.setTimeSource(timeSource);
+            huc3_.setTimeSource(timeSource);
+         }
+
          void rtcWrite(unsigned data)
          {
             rtc_.write(data);

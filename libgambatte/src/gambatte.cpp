@@ -116,6 +116,10 @@ void GB::setSerialIO(SerialIO *serial_io) {
 }
 #endif
 
+void GB::setTimeSource(TimeSource *time_source) {
+	p_->cpu.setTimeSource(time_source);
+}
+
 void *GB::savedata_ptr() { return p_->cpu.savedata_ptr(); }
 unsigned GB::savedata_size() { return p_->cpu.savedata_size(); }
 void *GB::rtcdata_ptr() { return p_->cpu.rtcdata_ptr(); }

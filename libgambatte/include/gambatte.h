@@ -23,6 +23,7 @@
 #ifdef HAVE_NETWORK
 #include "serial_io.h"
 #endif
+#include "timesource.h"
 #include "gbint.h"
 #include <string>
 #include <cstddef>
@@ -96,6 +97,10 @@ public:
 	/** Sets the callback used for transferring serial data. */
 	void setSerialIO(SerialIO *serial_io);
 #endif
+
+	/** Sets where this console's cartridge clock reads the time of day from.
+	    Null, the default, means the host clock. See timesource.h. */
+	void setTimeSource(TimeSource *time_source);
 	
 	/** Sets the directory used for storing save data. The default is the same directory as the ROM Image file. */
 	void setSaveDir(const std::string &sdir);

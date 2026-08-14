@@ -71,6 +71,10 @@ public:
 	}
 #endif
 
+	void setTimeSource(TimeSource *time_source) {
+		mem_.setTimeSource(time_source);
+	}
+
 	void setSaveDir(std::string const &sdir) {
 		mem_.setSaveDir(sdir);
 	}
