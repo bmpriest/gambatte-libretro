@@ -19,6 +19,7 @@
 #include "initstate.h"
 #include "counterdef.h"
 #include "savestate.h"
+#include "../include/timesource.h"
 #include "sound/sound_unit.h"
 #include <algorithm>
 #include <cstring>
@@ -1169,9 +1170,7 @@ namespace {
  */
 uint64_t initialClockEpoch() {
 #ifdef NETPLAY_DUAL_INSTANCE
-	/* 2020-01-01T00:00:00Z. Arbitrary, but a plausible-looking date beats 0 for
-	 * any game that shows one before its save has supplied a real value. */
-	return UINT64_C(1577836800);
+	return gambatte::DUAL_POWER_ON_EPOCH;
 #else
 	return static_cast<uint64_t>(std::time(0));
 #endif
