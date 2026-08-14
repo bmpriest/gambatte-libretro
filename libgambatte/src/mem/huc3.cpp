@@ -40,7 +40,7 @@ HuC3Chip::HuC3Chip()
 }
 
 void HuC3Chip::doLatch() {
-	uint64_t tmp = (halted_ ? haltTime_ : now()) - baseTime_;
+	uint64_t tmp = elapsedSince(baseTime_);
     
     unsigned minute = (tmp / 60) % 1440;
     unsigned day = (tmp / 86400) & 0xFFF;

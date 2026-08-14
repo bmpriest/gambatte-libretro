@@ -79,6 +79,13 @@ private:
 		                   : static_cast<uint64_t>(std::time(0));
 	}
 
+	/* Never negative - see Rtc::elapsedSince for why a saved clock can be ahead
+	 * of the current one, and what an unsigned subtraction did about it. */
+	uint64_t elapsedSince(uint64_t from) const {
+		const uint64_t at = halted_ ? haltTime_ : now();
+		return at > from ? at - from : 0;
+	}
+
 	TimeSource *timeSource_;
 	uint64_t baseTime_;
 	uint64_t haltTime_;
