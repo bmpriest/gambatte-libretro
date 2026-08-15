@@ -193,6 +193,17 @@ static void dual_record_frame(uint64_t primary_us, uint64_t secondary_us,
    /* One paired frame of emulated time, on both devices alike. This is what the
     * cartridge clocks advance from; dual_diag below is only diagnostics. */
    dual_clock_frames++;
+
+   /* Reported here rather than at content load, where it was merely premature:
+    * the frontend supplies the epochs during a handshake that finishes a
+    * fraction of a second *after* the game is up, so a warning at load time
+    * fired on every healthy session and read like a fault in the logs players
+    * send. By the first emulated frame the handshake has either happened or it
+    * never will. */
+   if (!dual_clocks_set && dual_clock_frames == 1)
+      gambatte_log(RETRO_LOG_INFO,
+         "GBLC cartridge clocks were never set by the frontend; both consoles "
+         "share the fixed power-on epoch\n");
    dual_diag.frames++;
    dual_diag.primary_us += primary_us;
    dual_diag.secondary_us += secondary_us;
@@ -3138,10 +3149,6 @@ bool retro_load_game(const struct retro_game_info *info)
          (int64_t)gambatte::DUAL_POWER_ON_EPOCH);
    gb2.shiftCartridgeClock((int64_t)dual_clock_b.epoch() -
          (int64_t)gambatte::DUAL_POWER_ON_EPOCH);
-   if (!dual_clocks_set)
-      gambatte_log(RETRO_LOG_INFO,
-         "GBLC cartridge clocks not set by the frontend; both consoles will "
-         "share the fixed power-on epoch\n");
    memset(&dual_diag, 0, sizeof(dual_diag));
    const char* mirror = getenv("GBLC_MIRROR_INPUT");
    dual_mirror_input = mirror && mirror[0] && strcmp(mirror, "0") != 0;
